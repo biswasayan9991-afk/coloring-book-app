@@ -1,0 +1,187 @@
+import React, { useMemo, useState, useEffect, useRef } from "react";
+
+// Color Puzzle - single-file React component (extended) // - Tailwind CSS classes used for styling (expects Tailwind in the host project) // - Includes: Match mode, Explore mode, and new Drawing Mode with level-based outlines // - AI integration points: fetchAIDrawingOutline is a placeholder to show where an //   external 'advanced AI' service could be called to generate outlines. For now the app //   ships with built-in SVG outlines suitable for kids (fruits, flowers, leaves, house).
+
+// Helper: convert HSL to HEX function hslToHex(h, s, l) { s /= 100; l /= 100; const k = n => (n + h / 30) % 12; const a = s * Math.min(l, 1 - l); const f = n => { const val = l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1))); return Math.round(val * 255) .toString(16) .padStart(2, "0"); }; return #${f(0)}${f(8)}${f(4)}; }
+
+function buildPalette(count = 180) { const pal = []; for (let i = 0; i < count; i++) { const h = Math.round((i * 360) / count); const s = 40 + Math.round(((i * 47) % 60)); const l = 30 + Math.round(((i * 29) % 40)); pal.push({ id: i, hex: hslToHex(h, s, l), hue: h, sat: s, light: l, name: Color ${i + 1} }); } return pal; }
+
+const NATURAL_OBJECTS = [ { id: "leaf", emoji: "🍃", name: "Leaf", hue: 120 }, { id: "ocean", emoji: "🌊", name: "Ocean", hue: 200 }, { id: "sand", emoji: "🏖️", name: "Sand", hue: 45 }, { id: "soil", emoji: "🪨", name: "Soil", hue: 20 }, { id: "sky", emoji: "☁️", name: "Sky", hue: 210 }, { id: "sun", emoji: "🌞", name: "Sun", hue: 50 }, { id: "sunset", emoji: "🌇", name: "Sunset", hue: 18 }, { id: "flower", emoji: "🌸", name: "Flower", hue: 320 }, { id: "pine", emoji: "🌲", name: "Pine", hue: 140 }, { id: "moss", emoji: "🪴", name: "Moss", hue: 100 }, { id: "lava", emoji: "🌋", name: "Lava", hue: 8 }, { id: "rock", emoji: "🪨", name: "Rock", hue: 30 }, ];
+
+function findClosestByHue(palette, targetHue) { let best = palette[0]; let bestDist = 360; for (const c of palette) { let d = Math.abs(c.hue - targetHue); if (d > 180) d = 360 - d; if (d < bestDist) { bestDist = d; best = c; } } return best; }
+
+// --- Built-in SVG outlines (kid-friendly, simple lines) --- // Each level references an outline ID. Complexity increases with level. const OUTLINES = { easy: [ { id: 'apple', name: 'Apple', svg: '<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"><path d="M100 35c15-18 45-18 58 0 14 19 10 42-6 58-16 17-48 33-52 78-4-45-36-61-52-78-16-16-20-39-6-58 13-18 43-18 58 0z" stroke="#000" strokeWidth="4" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>' }, { id: 'house', name: 'House', svg: '<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"><path d="M20 110 L100 40 L180 110 V170 H20 Z" stroke="#000" strokeWidth="4" fill="none"/><rect x="75" y="120" width="50" height="50" stroke="#000" strokeWidth="4" fill="none"/></svg>' }, { id: 'leaf', name: 'Leaf', svg: '<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"><path d="M30 100 C60 20,140 20,170 100 C140 180,60 180,30 100 Z" stroke="#000" strokeWidth="4" fill="none"/></svg>' } ], medium: [ { id: 'banana', name: 'Banana', svg: '<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"><path d="M40 120 C60 40,140 40,160 120 C140 100,60 100,40 120 Z" stroke="#000" strokeWidth="4" fill="none"/></svg>' }, { id: 'flower', name: 'Flower', svg: '<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"><circle cx="100" cy="100" r="18" stroke="#000" strokeWidth="3" fill="none"/><path d="M100 20 C110 50,140 50,160 70" stroke="#000" strokeWidth="3" fill="none"/><path d="M100 180 C110 150,140 150,160 130" stroke="#000" strokeWidth="3" fill="none"/><path d="M20 70 C40 50,70 50,100 20" stroke="#000" strokeWidth="3" fill="none"/></svg>' } ], hard: [ { id: 'tree', name: 'Tree', svg: '<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"><path d="M100 40 C120 60,150 70,150 100 C150 130,120 140,100 140 C80 140,50 130,50 100 C50 70,80 60,100 40 Z" stroke="#000" strokeWidth="3" fill="none"/><rect x="90" y="140" width="20" height="40" stroke="#000" strokeWidth="3" fill="none"/></svg>' }, { id: 'house_complex', name: 'Big House', svg: '<svg viewBox="0 0 300 200" xmlns="http://www.w3.org/2000/svg"><path d="M30 120 L150 30 L270 120 V170 H30 Z" stroke="#000" strokeWidth="3" fill="none"/><rect x="110" y="120" width="80" height="50" stroke="#000" strokeWidth="3" fill="none"/><path d="M70 170 L70 140" stroke="#000" strokeWidth="3" fill="none"/></svg>' } ] };
+
+// Placeholder for AI call - returns a promise resolving to an SVG string. // In production you can replace this with a real AI endpoint that returns vector outlines // (e.g., a server-side call to an image-generation / vectorization model). For now we // return built-in outlines based on requested difficulty/object. async function fetchAIDrawingOutline(difficulty = 'easy', objectId = null) { // Simulate network latency await new Promise(r => setTimeout(r, 200)); const pool = OUTLINES[difficulty] || OUTLINES.easy; if (objectId) { const found = pool.find(p => p.id === objectId); if (found) return found.svg; } // return a random outline from the pool return pool[Math.floor(Math.random() * pool.length)].svg; }
+
+export default function ColorPuzzleApp() { const palette = useMemo(() => buildPalette(180), []);
+
+const [level, setLevel] = useState(1); const [lives, setLives] = useState(3); const [score, setScore] = useState(0); const [mode, setMode] = useState('match'); // 'match' | 'explore' | 'draw' const [currentObject, setCurrentObject] = useState(null); const [options, setOptions] = useState([]); const [message, setMessage] = useState(''); const [showAll, setShowAll] = useState(false);
+
+// Drawing mode state const [drawingSVG, setDrawingSVG] = useState(null); const [drawingDifficulty, setDrawingDifficulty] = useState('easy'); const canvasRef = useRef(null); const [brushColor, setBrushColor] = useState('#ff4d4d'); const [brushSize, setBrushSize] = useState(6);
+
+useEffect(() => { startRound(); }, [level, mode]);
+
+async function startRound() { setMessage(''); const obj = NATURAL_OBJECTS[(level - 1) % NATURAL_OBJECTS.length]; setCurrentObject(obj); const correct = findClosestByHue(palette, obj.hue); const optionCount = Math.min(6 + Math.floor(level / 3), 10); const opts = new Set([correct.id]); while (opts.size < optionCount) { const r = Math.floor((Math.random() * palette.length) | 0); opts.add(palette[r].id); } const optArr = Array.from(opts).map(id => palette[id]); optArr.sort(() => Math.random() - 0.5); setOptions(optArr);
+
+// If entering drawing mode, fetch an outline
+if (mode === 'draw') {
+  const difficulty = pickDifficultyForLevel(level);
+  setDrawingDifficulty(difficulty);
+  const svg = await fetchAIDrawingOutline(difficulty);
+  setDrawingSVG(svg);
+  // clear canvas after outline loads
+  const c = canvasRef.current;
+  if (c && c.getContext) {
+    const ctx = c.getContext('2d');
+    ctx.clearRect(0, 0, c.width, c.height);
+  }
+}
+
+}
+
+function pickDifficultyForLevel(level) { if (level < 4) return 'easy'; if (level < 8) return 'medium'; return 'hard'; }
+
+function handleChoose(color) { const correct = findClosestByHue(palette, currentObject.hue); if (color.id === correct.id) { setScore(s => s + 10 * level); setMessage('Great job! 🎉'); setTimeout(() => setLevel(l => l + 1), 700); } else { setLives(l => l - 1); setMessage('Try again — look carefully! 🤔'); if (lives - 1 <= 0) { setTimeout(() => resetGame(), 1000); } } }
+
+function resetGame() { setMessage('Game over — let’s try again!'); setLevel(1); setLives(3); setScore(0); setTimeout(() => startRound(), 800); }
+
+// --- Drawing canvas interaction --- useEffect(() => { // attach simple drawing handlers const c = canvasRef.current; if (!c) return; const ctx = c.getContext('2d'); let drawing = false; let last = null;
+
+function getPos(e) {
+  const rect = c.getBoundingClientRect();
+  const x = (e.clientX ?? e.touches?.[0]?.clientX) - rect.left;
+  const y = (e.clientY ?? e.touches?.[0]?.clientY) - rect.top;
+  return { x, y };
+}
+
+function start(e) { drawing = true; last = getPos(e); }
+function move(e) {
+  if (!drawing) return; const p = getPos(e);
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.lineWidth = brushSize; ctx.strokeStyle = brushColor;
+  ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke(); last = p;
+}
+function end() { drawing = false; last = null; }
+
+c.addEventListener('mousedown', start);
+c.addEventListener('touchstart', start);
+window.addEventListener('mousemove', move);
+window.addEventListener('touchmove', move);
+window.addEventListener('mouseup', end);
+window.addEventListener('touchend', end);
+
+return () => {
+  c.removeEventListener('mousedown', start);
+  c.removeEventListener('touchstart', start);
+  window.removeEventListener('mousemove', move);
+  window.removeEventListener('touchmove', move);
+  window.removeEventListener('mouseup', end);
+  window.removeEventListener('touchend', end);
+};
+
+}, [brushColor, brushSize, drawingSVG]);
+
+function downloadDrawing() { const c = canvasRef.current; if (!c) return; const link = document.createElement('a'); link.download = drawing-level-${level}.png; link.href = c.toDataURL('image/png'); link.click(); }
+
+function clearCanvas() { const c = canvasRef.current; if (!c) return; const ctx = c.getContext('2d'); ctx.clearRect(0,0,c.width,c.height); }
+
+// Render helpers function renderExplore() { return ( <div className="mt-4"> <h3 className="text-lg font-semibold">Explore all colors</h3> <p className="text-sm text-gray-600">Tap any color to hear its hex and see details.</p> <div className="mt-3 grid grid-cols-6 gap-2 sm:grid-cols-8 md:grid-cols-12"> {palette.map(c => ( <button key={c.id} className="w-full h-12 rounded shadow-sm flex items-center justify-center text-xs font-medium ring-1 ring-inset ring-black/5" onClick={() => setMessage(${c.name} — ${c.hex})} style={{ background: c.hex }} aria-label={Color ${c.id}} /> ))} </div> </div> ); }
+
+function renderDrawingMode() { const svgMarkup = drawingSVG || '<svg viewBox="0 0 200 200"></svg>'; return ( <div className="mt-4"> <h3 className="text-lg font-semibold">Drawing — Level {level} ({drawingDifficulty})</h3> <p className="text-sm text-gray-600">Fill the outline with colors. As levels increase outlines become more detailed.</p>
+
+<div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+      <div className="bg-gray-50 rounded-lg p-3 shadow-sm">
+        <div className="text-sm font-medium mb-2">Outline</div>
+        <div className="w-full h-[360px] flex items-center justify-center bg-white rounded"> 
+          <div className="w-[320px] h-[320px] relative">
+            {/* show SVG outline behind canvas */}
+            <div className="absolute inset-0 p-2" dangerouslySetInnerHTML={{ __html: svgMarkup }} />
+            <canvas ref={canvasRef} width={320} height={320} className="absolute inset-0" />
+          </div>
+        </div>
+
+        <div className="mt-3 flex gap-2 items-center">
+          <label className="text-sm">Brush</label>
+          <input type="range" min="1" max="30" value={brushSize} onChange={e => setBrushSize(Number(e.target.value))} />
+          <input type="color" value={brushColor} onChange={e => setBrushColor(e.target.value)} className="w-10 h-8 p-0" />
+          <button className="px-3 py-1 rounded border" onClick={clearCanvas}>Clear</button>
+          <button className="px-3 py-1 rounded bg-indigo-600 text-white" onClick={downloadDrawing}>Download</button>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-lg p-3 shadow-sm">
+        <div className="text-sm font-medium mb-2">Color palette</div>
+        <div className="grid grid-cols-6 gap-2">
+          {palette.slice(0, 60).map(c => (
+            <button key={c.id} onClick={() => setBrushColor(c.hex)} style={{ background: c.hex }} className="w-full h-10 rounded" title={c.hex} />
+          ))}
+        </div>
+
+        <div className="mt-4 text-sm text-gray-600">Tip: choose colors that match the object (e.g., green for leaves). Higher levels encourage shading and multiple colors.</div>
+      </div>
+    </div>
+
+  </div>
+);
+
+}
+
+return ( <div className="max-w-4xl mx-auto p-4"> <header className="flex items-center justify-between"> <div> <h1 className="text-2xl font-extrabold">Color Puzzle — Nature Edition</h1> <p className="text-sm text-gray-600">Match nature objects to the correct color, explore palettes, or draw inside outlines.</p> </div> <div className="text-right"> <div className="text-sm">Level <strong>{level}</strong></div> <div className="text-sm">Score <strong>{score}</strong></div> <div className="text-sm">Lives <strong>{lives}</strong></div> </div> </header>
+
+<main className="mt-6 bg-white p-4 rounded-2xl shadow-md">
+    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div className="flex items-center gap-4">
+        <div className="w-28 h-28 rounded-xl flex items-center justify-center text-5xl bg-gradient-to-br from-white/70 to-black/5 shadow">
+          <span role="img" aria-label={currentObject?.name}>{currentObject?.emoji}</span>
+        </div>
+        <div>
+          <div className="text-lg font-semibold">{currentObject?.name}</div>
+          <div className="text-sm text-gray-600">Tap the color that matches the {currentObject?.name?.toLowerCase()} — or switch to Draw mode to color an outline.</div>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <select value={mode} onChange={e => setMode(e.target.value)} className="px-3 py-1 rounded-lg border">
+          <option value="match">Match</option>
+          <option value="explore">Explore</option>
+          <option value="draw">Draw</option>
+        </select>
+        <button className="px-3 py-1 rounded-lg bg-indigo-600 text-white text-sm" onClick={() => setShowAll(s => !s)}>{showAll ? 'Hide palette' : 'Show full palette'}</button>
+        <button className="px-3 py-1 rounded-lg border text-sm" onClick={resetGame}>Reset</button>
+      </div>
+    </div>
+
+    {mode === 'explore' ? renderExplore() : mode === 'draw' ? renderDrawingMode() : (
+      <div className="mt-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          {options.map(opt => (
+            <button key={opt.id} onClick={() => handleChoose(opt)} className="h-20 rounded-lg shadow-md flex items-center justify-center text-white text-sm font-bold" style={{ background: opt.hex }}>
+            </button>
+          ))}
+        </div>
+      </div>
+    )}
+
+    {showAll && (
+      <div className="mt-4">
+        <h3 className="text-sm font-semibold">Full palette</h3>
+        <div className="mt-2 grid grid-cols-6 gap-1 md:grid-cols-12">
+          {palette.map(c => (
+            <div key={c.id} className="p-0.5">
+              <div className="w-full h-10 rounded-md shadow-sm flex items-center justify-center text-xxs text-black/60 text-xs" title={`${c.name} ${c.hex}`} style={{ background: c.hex }} onClick={() => setMessage(`${c.name} — ${c.hex}`)} />
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
+
+    <div className="mt-4">
+      <div className="min-h-[48px] flex items-center"><div className="text-sm text-gray-700">{message || 'Choose the correct color to score points!'}</div></div>
+    </div>
+
+    <footer className="mt-4 text-xs text-gray-500 border-t pt-3">Tips: Use Draw mode for creative coloring. The app includes built-in outlines; tell me if you want real AI-generated outlines and I will integrate an AI service to create custom shapes per level.</footer>
+  </main>
+</div>
+
+); }
+
